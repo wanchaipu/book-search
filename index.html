@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ค้นหาหนังสือ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f5f1; --card:#fff; --ink:#1f2328; --muted:#6b7078; --line:#e3e1da;
+    --accent:#3150a0; --accent-soft:#e8edf8; --mark:#fff1b8;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#15171b; --card:#1e2127; --ink:#e7e8ea; --muted:#9aa0a8; --line:#2d3139;
+      --accent:#8ea8f0; --accent-soft:#26304a; --mark:#5a4a12; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.55 "Sarabun",system-ui,-apple-system,"Segoe UI",sans-serif}
+  .wrap{max-width:880px;margin:0 auto;padding:28px 16px 60px}
+  h1{font-size:1.6rem;margin:0 0 4px}
+  .sub{color:var(--muted);margin:0 0 20px;font-size:.95rem}
+  .search{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0 12px}
+  .box{display:flex;gap:8px;flex-wrap:wrap}
+  input,select{font:inherit;color:inherit;background:var(--card);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px}
+  input{flex:1 1 320px;min-width:0;font-size:1.05rem}
+  input:focus,select:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+  select{flex:0 1 260px;min-width:0;max-width:100%}
+  .meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;
+    color:var(--muted);font-size:.9rem;margin-top:8px}
+  .meta button{font:inherit;background:none;border:0;color:var(--accent);cursor:pointer;padding:0}
+  ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+  li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .title{font-weight:600;font-size:1.05rem;margin:0 0 4px}
+  .row{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--muted);font-size:.92rem}
+  .row b{font-weight:600;color:var(--ink)}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .tag{background:var(--accent-soft);color:var(--accent);border-radius:999px;padding:1px 10px;font-size:.82rem}
+  .tag.id{font-variant-numeric:tabular-nums}
+  mark{background:var(--mark);color:inherit;border-radius:3px;padding:0 1px}
+  .empty{text-align:center;color:var(--muted);padding:40px 0}
+  .more{display:block;margin:16px auto 0;font:inherit;padding:10px 18px;border-radius:10px;
+    border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ค้นหาหนังสือ</h1>
+  <p class="sub" id="sub">กำลังโหลดรายการหนังสือ…</p>
+
+  <div class="search">
+    <div class="box">
+      <input id="q" type="search" placeholder="ค้นชื่อเรื่อง, ผู้แต่ง, สำนักพิมพ์, เลขทะเบียน, รหัสหนังสือ" autocomplete="off" autofocus>
+      <select id="note"><option value="">หมายเหตุ / สำนักพิมพ์ — ทั้งหมด</option></select>
+    </div>
+    <div class="meta"><span id="count"></span><button id="clear" hidden>ล้างการค้นหา</button></div>
+  </div>
+
+  <ul id="list"></ul>
+  <button class="more" id="more" hidden>แสดงเพิ่ม</button>
+</div>
+
+<script>
+(function(){
+  var PAGE = 60;
+  var books = [], shown = PAGE;
+  var $ = function(id){ return document.getElementById(id); };
+  var q = $('q'), note = $('note');
+
+  // ตัดช่องว่าง/เครื่องหมาย ให้ค้นแบบไม่สนวรรคตอน
+  function norm(s){ return (s||'').toLowerCase().replace(/[\s"'“”‘’()\[\]\-–—.,:;\/]+/g,''); }
+  function esc(s){ return (s||'').replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
+
+  // ไฮไลต์คำค้นในข้อความเดิม (ข้ามช่องว่าง/วรรคตอนระหว่างตัวอักษร)
+  function hl(text, terms){
+    if(!terms.length || !text) return esc(text);
+    var ranges = [];
+    var map = [], flat = '';
+    for(var i=0;i<text.length;i++){
+      var n = norm(text[i]);
+      if(n){ flat += n; for(var k=0;k<n.length;k++) map.push(i); }
+    }
+    terms.forEach(function(t){
+      var from = 0, at;
+      while(t && (at = flat.indexOf(t, from)) !== -1){
+        ranges.push([map[at], map[at+t.length-1]+1]); from = at + t.length;
+      }
+    });
+    if(!ranges.length) return esc(text);
+    ranges.sort(function(a,b){return a[0]-b[0];});
+    var out = '', pos = 0;
+    ranges.forEach(function(r){
+      if(r[1] <= pos) return;
+      var s = Math.max(r[0], pos);
+      out += esc(text.slice(pos, s)) + '<mark>' + esc(text.slice(s, r[1])) + '</mark>';
+      pos = r[1];
+    });
+    return out + esc(text.slice(pos));
+  }
+
+  function render(){
+    var raw = q.value.trim();
+    var terms = raw.split(/\s+/).map(norm).filter(Boolean);
+    var nv = note.value;
+    var hits = books.filter(function(b){
+      if(nv && b.note !== nv) return false;
+      return terms.every(function(t){ return b._s.indexOf(t) !== -1; });
+    });
+
+    $('count').textContent = (terms.length || nv)
+      ? 'พบ ' + hits.length.toLocaleString('th-TH') + ' จาก ' + books.length.toLocaleString('th-TH') + ' เล่ม'
+      : 'ทั้งหมด ' + books.length.toLocaleString('th-TH') + ' เล่ม';
+    $('clear').hidden = !(raw || nv);
+
+    if(!hits.length){
+      $('list').innerHTML = '<li class="empty">ไม่พบหนังสือที่ตรงกับ “' + esc(raw) + '”</li>';
+      $('more').hidden = true; return;
+    }
+    $('list').innerHTML = hits.slice(0, shown).map(function(b){
+      var tags = '<span class="tag id">เลขทะเบียน ' + hl(b.id, terms) + '</span>';
+      if(b.call)  tags += '<span class="tag">รหัส ' + hl(b.call, terms) + '</span>';
+      if(b.shelf) tags += '<span class="tag">' + esc(b.shelf) + '</span>';
+      if(b.type)  tags += '<span class="tag">' + esc(b.type) + '</span>';
+      var row = '';
+      if(b.author) row += '<span>ผู้แต่ง <b>' + hl(b.author, terms) + '</b></span>';
+      if(b.note)   row += '<span>หมายเหตุ ' + hl(b.note, terms) + '</span>';
+      return '<li><p class="title">' + hl(b.title, terms) + '</p>'
+        + (row ? '<div class="row">' + row + '</div>' : '')
+        + '<div class="tags">' + tags + '</div></li>';
+    }).join('');
+    $('more').hidden = hits.length <= shown;
+    $('more').textContent = 'แสดงเพิ่ม (เหลืออีก ' + (hits.length - shown).toLocaleString('th-TH') + ')';
+  }
+
+  function syncUrl(){
+    var p = new URLSearchParams();
+    if(q.value.trim()) p.set('q', q.value.trim());
+    if(note.value) p.set('note', note.value);
+    history.replaceState(null, '', p.toString() ? '?' + p : location.pathname);
+  }
+
+  var t;
+  q.addEventListener('input', function(){ clearTimeout(t); t = setTimeout(function(){ shown = PAGE; render(); syncUrl(); }, 120); });
+  note.addEventListener('change', function(){ shown = PAGE; render(); syncUrl(); });
+  $('clear').addEventListener('click', function(){ q.value=''; note.value=''; shown = PAGE; render(); syncUrl(); q.focus(); });
+  $('more').addEventListener('click', function(){ shown += PAGE; render(); });
+
+  fetch('data/books.json', {cache:'no-cache'}).then(function(r){ return r.json(); }).then(function(data){
+    books = data.map(function(b){
+      b._s = norm([b.id, b.title, b.call, b.note, b.author, b.type, b.shelf].join(' '));
+      return b;
+    });
+    var counts = {};
+    books.forEach(function(b){ if(b.note) counts[b.note] = (counts[b.note]||0) + 1; });
+    Object.keys(counts).sort(function(a,b){ return counts[b]-counts[a] || a.localeCompare(b,'th'); })
+      .forEach(function(n){
+        var o = document.createElement('option'); o.value = n; o.textContent = n + ' (' + counts[n] + ')';
+        note.appendChild(o);
+      });
+    var shelves = Array.from(new Set(books.map(function(b){ return b.shelf; }).filter(Boolean)));
+    $('sub').textContent = 'ทะเบียนหนังสือ ' + shelves.join(', ') + ' · พิมพ์คำได้หลายคำ คั่นด้วยช่องว่าง';
+
+    var p = new URLSearchParams(location.search);
+    q.value = p.get('q') || '';
+    if(p.get('note')) note.value = p.get('note');
+    render();
+  }).catch(function(){
+    $('sub').textContent = 'โหลดข้อมูลไม่สำเร็จ — ต้องเปิดผ่านเว็บเซิร์ฟเวอร์ (ไม่ใช่ file://)';
+  });
+})();
+</script>
+</body>
+</html>

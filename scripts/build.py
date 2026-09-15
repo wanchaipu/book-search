@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""แปลง data/books.csv (export จาก Google Sheet แผ่นแรก) → data/books.json
+
+ใช้:  python3 scripts/build.py [path/to/books.csv]
+"""
+import csv, json, sys, pathlib
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+src = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "books.csv"
+
+FIELDS = {  # หัวคอลัมน์ในชีต → key ใน JSON
+    "เลขทะเบียน": "id",
+    "ชื่อเรื่อง": "title",
+    "รหัสหนังสือ": "call",
+    "ตู้เก็บ": "shelf",
+    "หมายเหตุ": "note",
+    "ชื่อผู้แต่ง": "author",
+    "ประเภท": "type",
+}
+
+def clean(s):
+    s = " ".join((s or "").split())
+    # ชีตบางแถวครอบชื่อเรื่องด้วย "..." ทั้งก้อน
+    if len(s) > 1 and s[0] == '"' and s[-1] == '"' and s.count('"') == 2:
+        s = s[1:-1].strip()
+    return s
+
+with src.open(encoding="utf-8-sig", newline="") as f:
+    rows = list(csv.reader(f))
+
+header = [h.strip() for h in rows[0]]
+books = []
+for r in rows[1:]:
+    b = {key: "" for key in FIELDS.values()}
+    for i, h in enumerate(header):
+        if h in FIELDS and i < len(r):
+            b[FIELDS[h]] = clean(r[i])
+    if b["id"] or b["title"]:
+        books.append(b)
+
+out = ROOT / "data" / "books.json"
+out.write_text(json.dumps(books, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+print(f"{len(books)} books → {out.relative_to(ROOT)}")
