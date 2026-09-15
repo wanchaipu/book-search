@@ -3,7 +3,7 @@
 
 ใช้:  python3 scripts/build.py [path/to/books.csv]
 """
-import csv, json, sys, pathlib
+import csv, json, re, sys, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 src = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "data" / "books.csv"
@@ -16,7 +16,25 @@ FIELDS = {  # หัวคอลัมน์ในชีต → key ใน JSON
     "หมายเหตุ": "note",
     "ชื่อผู้แต่ง": "author",
     "ประเภท": "type",
+    "รูป": "img",
 }
+
+IMG_DIR = ROOT / "images"
+IMG_EXT = (".jpg", ".jpeg", ".png", ".webp")
+
+def image_for(b):
+    """คอลัมน์ "รูป" ในชีต (URL / ลิงก์ Google Drive) มาก่อน, ไม่มีก็หา images/<เลขทะเบียน>.jpg"""
+    url = b.get("img", "")
+    m = re.search(r"drive\.google\.com/(?:file/d/|open\?id=|uc\?.*?id=)([\w-]{20,})", url)
+    if m:
+        return f"https://drive.google.com/thumbnail?id={m.group(1)}&sz=w600"
+    if url.startswith("http"):
+        return url
+    for ext in IMG_EXT:
+        p = IMG_DIR / f"{b['id']}{ext}"
+        if b["id"] and p.exists():
+            return f"images/{p.name}"
+    return ""
 
 def clean(s):
     s = " ".join((s or "").split())
@@ -35,9 +53,10 @@ for r in rows[1:]:
     for i, h in enumerate(header):
         if h in FIELDS and i < len(r):
             b[FIELDS[h]] = clean(r[i])
+    b["img"] = image_for(b)
     if b["id"] or b["title"]:
         books.append(b)
 
 out = ROOT / "data" / "books.json"
 out.write_text(json.dumps(books, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-print(f"{len(books)} books → {out.relative_to(ROOT)}")
+print(f"{len(books)} books ({sum(1 for b in books if b['img'])} with image) → {out.relative_to(ROOT)}")

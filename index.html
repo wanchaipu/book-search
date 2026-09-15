@@ -16,6 +16,7 @@
       --accent:#8ea8f0; --accent-soft:#26304a; --mark:#5a4a12; }
   }
   *{box-sizing:border-box}
+  [hidden]{display:none!important}
   body{margin:0;background:var(--bg);color:var(--ink);
     font:16px/1.55 "Sarabun",system-ui,-apple-system,"Segoe UI",sans-serif}
   .wrap{max-width:880px;margin:0 auto;padding:28px 16px 60px}
@@ -32,7 +33,24 @@
     color:var(--muted);font-size:.9rem;margin-top:8px}
   .meta button{font:inherit;background:none;border:0;color:var(--accent);cursor:pointer;padding:0}
   ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
-  li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
+    display:grid;grid-template-columns:84px 1fr;gap:16px;align-items:start}
+  li.empty{display:block}
+  .info{min-width:0}
+  .cover{width:84px;aspect-ratio:2/3;border-radius:4px 6px 6px 4px;overflow:hidden;position:relative;
+    box-shadow:0 1px 2px rgba(0,0,0,.12),0 4px 10px rgba(0,0,0,.08)}
+  .cover img{width:100%;height:100%;object-fit:cover;display:block;background:var(--line)}
+  button.cover{padding:0;border:0;cursor:zoom-in;background:none}
+  .ph{width:100%;height:100%;padding:10px 7px 8px 12px;color:#fff;display:flex;flex-direction:column;
+    justify-content:space-between;text-align:left;
+    background-image:linear-gradient(90deg,rgba(0,0,0,.22) 0,rgba(0,0,0,.22) 5px,rgba(255,255,255,.12) 5px,transparent 8px)}
+  .ph span{font-size:.62rem;line-height:1.3;font-weight:600;display:-webkit-box;-webkit-line-clamp:6;
+    -webkit-box-orient:vertical;overflow:hidden;word-break:break-word}
+  .ph i{font-style:normal;font-size:.55rem;opacity:.8}
+  @media (max-width:480px){ li{grid-template-columns:64px 1fr;gap:12px;padding:12px} .cover{width:64px} .ph span{-webkit-line-clamp:5} }
+  .lb{position:fixed;inset:0;z-index:20;background:rgba(0,0,0,.82);display:flex;align-items:center;
+    justify-content:center;padding:16px;cursor:zoom-out}
+  .lb img{max-width:100%;max-height:100%;border-radius:6px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
   .title{font-weight:600;font-size:1.05rem;margin:0 0 4px}
   .row{display:flex;flex-wrap:wrap;gap:4px 16px;color:var(--muted);font-size:.92rem}
   .row b{font-weight:600;color:var(--ink)}
@@ -61,11 +79,12 @@
   <ul id="list"></ul>
   <button class="more" id="more" hidden>แสดงเพิ่ม</button>
 </div>
+<div class="lb" id="lb" hidden><img alt=""></div>
 
 <script>
 (function(){
   var PAGE = 60;
-  var books = [], shown = PAGE;
+  var books = [], current = [], shown = PAGE;
   var $ = function(id){ return document.getElementById(id); };
   var q = $('q'), note = $('note');
 
@@ -100,6 +119,20 @@
     return out + esc(text.slice(pos));
   }
 
+  // ปกสำรองเมื่อยังไม่มีรูป — สีตามหมายเหตุ/สำนักพิมพ์ ให้เล่มกลุ่มเดียวกันสีเดียวกัน
+  var COLORS = ['#3150a0','#8a3b2e','#2f6b4f','#6b4a8a','#9a6a1f','#2c6a7a','#7a2f55','#4a5a2a'];
+  function placeholder(b){
+    var h = 0, k = b.note || b.author || b.title;
+    for(var i=0;i<k.length;i++) h = (h*31 + k.charCodeAt(i)) >>> 0;
+    return '<div class="ph" style="background-color:' + COLORS[h % COLORS.length] + '">'
+      + '<span>' + esc(b.title) + '</span><i>' + esc(b.id) + '</i></div>';
+  }
+  function cover(b, i){
+    if(!b.img) return '<div class="cover" aria-hidden="true">' + placeholder(b) + '</div>';
+    return '<button class="cover" data-i="' + i + '" aria-label="ดูรูปปกขนาดใหญ่">'
+      + '<img src="' + esc(b.img) + '" alt="ปก ' + esc(b.title) + '" loading="lazy" referrerpolicy="no-referrer"></button>';
+  }
+
   function render(){
     var raw = q.value.trim();
     var terms = raw.split(/\s+/).map(norm).filter(Boolean);
@@ -118,7 +151,8 @@
       $('list').innerHTML = '<li class="empty">ไม่พบหนังสือที่ตรงกับ “' + esc(raw) + '”</li>';
       $('more').hidden = true; return;
     }
-    $('list').innerHTML = hits.slice(0, shown).map(function(b){
+    current = hits;
+    $('list').innerHTML = hits.slice(0, shown).map(function(b, i){
       var tags = '<span class="tag id">เลขทะเบียน ' + hl(b.id, terms) + '</span>';
       if(b.call)  tags += '<span class="tag">รหัส ' + hl(b.call, terms) + '</span>';
       if(b.shelf) tags += '<span class="tag">' + esc(b.shelf) + '</span>';
@@ -126,9 +160,9 @@
       var row = '';
       if(b.author) row += '<span>ผู้แต่ง <b>' + hl(b.author, terms) + '</b></span>';
       if(b.note)   row += '<span>หมายเหตุ ' + hl(b.note, terms) + '</span>';
-      return '<li><p class="title">' + hl(b.title, terms) + '</p>'
+      return '<li>' + cover(b, i) + '<div class="info"><p class="title">' + hl(b.title, terms) + '</p>'
         + (row ? '<div class="row">' + row + '</div>' : '')
-        + '<div class="tags">' + tags + '</div></li>';
+        + '<div class="tags">' + tags + '</div></div></li>';
     }).join('');
     $('more').hidden = hits.length <= shown;
     $('more').textContent = 'แสดงเพิ่ม (เหลืออีก ' + (hits.length - shown).toLocaleString('th-TH') + ')';
@@ -146,6 +180,19 @@
   note.addEventListener('change', function(){ shown = PAGE; render(); syncUrl(); });
   $('clear').addEventListener('click', function(){ q.value=''; note.value=''; shown = PAGE; render(); syncUrl(); q.focus(); });
   $('more').addEventListener('click', function(){ shown += PAGE; render(); });
+
+  // รูปโหลดไม่ขึ้น → ใช้ปกสำรองแทน
+  $('list').addEventListener('error', function(e){
+    var btn = e.target.tagName === 'IMG' && e.target.closest('.cover');
+    if(btn) btn.outerHTML = '<div class="cover" aria-hidden="true">' + placeholder(current[+btn.dataset.i]) + '</div>';
+  }, true);
+  $('list').addEventListener('click', function(e){
+    var btn = e.target.closest('button.cover');
+    if(!btn) return;
+    var lb = $('lb'); lb.firstChild.src = current[+btn.dataset.i].img; lb.hidden = false;
+  });
+  $('lb').addEventListener('click', function(){ this.hidden = true; });
+  document.addEventListener('keydown', function(e){ if(e.key === 'Escape') $('lb').hidden = true; });
 
   fetch('data/books.json', {cache:'no-cache'}).then(function(r){ return r.json(); }).then(function(data){
     books = data.map(function(b){
