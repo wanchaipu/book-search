@@ -97,7 +97,7 @@
 (function(){
   // ลิงก์ CSV ของชีตแผ่น "ชั้น 2" (ไฟล์ → แชร์ → เผยแพร่ไปยังเว็บ → เลือกแผ่น → CSV)
   // เว้นว่าง = ซ่อนปุ่มซิงก์ ใช้ข้อมูลใน data/books.json อย่างเดียว
-  var SHEET_CSV_URL = '';
+  var SHEET_CSV_URL = 'https://docs.google.com/spreadsheets/d/1lqxUVT8DyAvRik5xZmtP9e627Fqx1RfLi7hL8ahsnIo/gviz/tq?tqx=out:csv&headers=1&sheet=' + encodeURIComponent('ชั้น 2');
 
   var PAGE = 60, CACHE_KEY = 'book-search:sheet';
   var books = [], current = [], shown = PAGE;
