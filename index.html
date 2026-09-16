@@ -32,6 +32,11 @@
   .meta{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;
     color:var(--muted);font-size:.9rem;margin-top:8px}
   .meta button{font:inherit;background:none;border:0;color:var(--accent);cursor:pointer;padding:0}
+  .meta button:disabled{color:var(--muted);cursor:default}
+  .acts{display:flex;gap:16px;flex-wrap:wrap}
+  .src{margin:6px 0 0;font-size:.85rem;color:var(--muted);min-height:1.2em}
+  .src.err{color:#b3261e}
+  @media (prefers-color-scheme: dark){ .src.err{color:#f2b8b5} }
   ul{list-style:none;margin:0;padding:0;display:grid;gap:10px}
   li{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px;
     display:grid;grid-template-columns:84px 1fr;gap:16px;align-items:start}
@@ -73,7 +78,14 @@
       <input id="q" type="search" placeholder="ค้นชื่อเรื่อง, ผู้แต่ง, สำนักพิมพ์, เลขทะเบียน, รหัสหนังสือ" autocomplete="off" autofocus>
       <select id="note"><option value="">หมายเหตุ / สำนักพิมพ์ — ทั้งหมด</option></select>
     </div>
-    <div class="meta"><span id="count"></span><button id="clear" hidden>ล้างการค้นหา</button></div>
+    <div class="meta">
+      <span id="count"></span>
+      <span class="acts">
+        <button id="sync" hidden>⟳ ซิงก์จาก Google Sheet</button>
+        <button id="clear" hidden>ล้างการค้นหา</button>
+      </span>
+    </div>
+    <p class="src" id="src"></p>
   </div>
 
   <ul id="list"></ul>
@@ -83,7 +95,11 @@
 
 <script>
 (function(){
-  var PAGE = 60;
+  // ลิงก์ CSV ของชีตแผ่น "ชั้น 2" (ไฟล์ → แชร์ → เผยแพร่ไปยังเว็บ → เลือกแผ่น → CSV)
+  // เว้นว่าง = ซ่อนปุ่มซิงก์ ใช้ข้อมูลใน data/books.json อย่างเดียว
+  var SHEET_CSV_URL = '';
+
+  var PAGE = 60, CACHE_KEY = 'book-search:sheet';
   var books = [], current = [], shown = PAGE;
   var $ = function(id){ return document.getElementById(id); };
   var q = $('q'), note = $('note');
@@ -194,20 +210,103 @@
   $('lb').addEventListener('click', function(){ this.hidden = true; });
   document.addEventListener('keydown', function(e){ if(e.key === 'Escape') $('lb').hidden = true; });
 
-  fetch('data/books.json', {cache:'no-cache'}).then(function(r){ return r.json(); }).then(function(data){
+  // ---- ซิงก์จาก Google Sheet (ทำงานในเบราว์เซอร์ ไม่แตะ repo) ----
+  function parseCSV(text){
+    var rows = [], row = [], cell = '', inQ = false;
+    text = text.replace(/^﻿/, '').replace(/\r\n?/g, '\n');
+    for(var i=0;i<text.length;i++){
+      var c = text[i];
+      if(inQ){
+        if(c === '"'){ if(text[i+1] === '"'){ cell += '"'; i++; } else inQ = false; }
+        else cell += c;
+      }
+      else if(c === '"') inQ = true;
+      else if(c === ','){ row.push(cell); cell = ''; }
+      else if(c === '\n'){ row.push(cell); rows.push(row); row = []; cell = ''; }
+      else cell += c;
+    }
+    row.push(cell); rows.push(row);
+    return rows.filter(function(r){ return r.some(function(x){ return x.trim(); }); });
+  }
+
+  var FIELDS = {'เลขทะเบียน':'id','ชื่อเรื่อง':'title','รหัสหนังสือ':'call','ตู้เก็บ':'shelf',
+                'หมายเหตุ':'note','ชื่อผู้แต่ง':'author','ประเภท':'type','รูป':'img'};
+
+  function clean(s){
+    s = (s||'').split(/\s+/).join(' ').trim();
+    if(s.length > 1 && s[0] === '"' && s.slice(-1) === '"' && s.split('"').length === 3) s = s.slice(1,-1).trim();
+    return s;
+  }
+
+  function fromCSV(text, byId){
+    var rows = parseCSV(text), head = rows[0].map(function(h){ return h.trim(); });
+    return rows.slice(1).map(function(r){
+      var b = {id:'',title:'',call:'',shelf:'',note:'',author:'',type:'',img:''};
+      head.forEach(function(h, i){ if(FIELDS[h]) b[FIELDS[h]] = clean(r[i]); });
+      var m = /drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*?id=)([\w-]{20,})/.exec(b.img);
+      if(m) b.img = 'https://drive.google.com/thumbnail?id=' + m[1] + '&sz=w600';
+      else if(b.img && b.img.slice(0,4) !== 'http') b.img = '';
+      // ไม่มีรูปในชีต → คงรูปที่มีอยู่ใน repo (images/<เลขทะเบียน>.jpg)
+      if(!b.img && byId[b.id]) b.img = byId[b.id].img;
+      return b;
+    }).filter(function(b){ return b.id || b.title; });
+  }
+
+  function setBooks(data, label){
     books = data.map(function(b){
       b._s = norm([b.id, b.title, b.call, b.note, b.author, b.type, b.shelf].join(' '));
       return b;
     });
-    var counts = {};
+    var keep = note.value, counts = {};
     books.forEach(function(b){ if(b.note) counts[b.note] = (counts[b.note]||0) + 1; });
+    note.length = 1;
     Object.keys(counts).sort(function(a,b){ return counts[b]-counts[a] || a.localeCompare(b,'th'); })
       .forEach(function(n){
         var o = document.createElement('option'); o.value = n; o.textContent = n + ' (' + counts[n] + ')';
         note.appendChild(o);
       });
+    note.value = keep;
     var shelves = Array.from(new Set(books.map(function(b){ return b.shelf; }).filter(Boolean)));
     $('sub').textContent = 'ทะเบียนหนังสือ ' + shelves.join(', ') + ' · พิมพ์คำได้หลายคำ คั่นด้วยช่องว่าง';
+    $('src').className = 'src';
+    $('src').textContent = label;
+    render();
+  }
+
+  function when(ts){
+    return new Date(ts).toLocaleString('th-TH', {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'});
+  }
+
+  function sync(){
+    var btn = $('sync');
+    btn.disabled = true; btn.textContent = '⟳ กำลังซิงก์…';
+    fetch(SHEET_CSV_URL + (SHEET_CSV_URL.indexOf('?') < 0 ? '?' : '&') + 't=' + Date.now(), {cache:'no-store'})
+      .then(function(r){ if(!r.ok) throw new Error(r.status); return r.text(); })
+      .then(function(text){
+        var byId = {};
+        books.forEach(function(b){ byId[b.id] = b; });
+        var data = fromCSV(text, byId);
+        if(!data.length) throw new Error('empty');
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify({at: Date.now(), books: data})); } catch(e){}
+        setBooks(data, 'ข้อมูลจากชีต · ซิงก์ล่าสุด ' + when(Date.now()));
+      })
+      .catch(function(){
+        $('src').className = 'src err';
+        $('src').textContent = 'ซิงก์ไม่สำเร็จ — ตรวจว่าชีตตั้งค่า "เผยแพร่ไปยังเว็บ" เป็น CSV แล้ว (ตอนนี้ยังใช้ข้อมูลเดิมอยู่)';
+      })
+      .then(function(){ btn.disabled = false; btn.textContent = '⟳ ซิงก์จาก Google Sheet'; });
+  }
+
+  fetch('data/books.json', {cache:'no-cache'}).then(function(r){ return r.json(); }).then(function(data){
+    var label = 'ข้อมูลจากไฟล์ในเว็บ';
+    if(SHEET_CSV_URL){
+      $('sync').hidden = false;
+      try {
+        var c = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null');
+        if(c && c.books && c.books.length){ data = c.books; label = 'ข้อมูลจากชีต · ซิงก์ล่าสุด ' + when(c.at); }
+      } catch(e){}
+    }
+    setBooks(data, label);
 
     var p = new URLSearchParams(location.search);
     q.value = p.get('q') || '';
@@ -216,6 +315,8 @@
   }).catch(function(){
     $('sub').textContent = 'โหลดข้อมูลไม่สำเร็จ — ต้องเปิดผ่านเว็บเซิร์ฟเวอร์ (ไม่ใช่ file://)';
   });
+
+  $('sync').addEventListener('click', sync);
 })();
 </script>
 </body>
